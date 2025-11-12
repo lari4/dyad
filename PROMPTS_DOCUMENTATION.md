@@ -377,3 +377,249 @@ When tools are not used, simply state: **"Ok, looks like I don't need any tools,
 ```
 
 ---
+
+## Промты для мышления и рассуждений
+
+### THINKING_PROMPT - Промт структурированного мышления
+
+**Расположение:** `src/prompts/system_prompt.ts`
+
+**Назначение:** Этот промт добавляется ПЕРЕД основным системным промтом для включения режима структурированного мышления. AI использует специальные теги `<think></think>` для планирования подхода перед генерацией ответа. Это обеспечивает более продуманные и точные ответы.
+
+**Ключевые возможности:**
+- Структурированное планирование подхода к задаче
+- Анализ проблемы перед её решением
+- Выделение ключевых инсайтов
+- Пошаговая декомпозиция задачи
+- Улучшение качества ответов через рефлексию
+
+**Формат мышления:**
+- Bullet points для разбивки шагов
+- **Жирный шрифт** для ключевых инсайтов
+- Четкий аналитический фреймворк
+- Теги `<think></think>` не видны пользователю
+
+**Пример использования:**
+При отладке UI бага AI сначала думает внутри `<think>` тегов:
+1. Идентифицирует конкретный баг
+2. Изучает релевантные компоненты
+3. Диагностирует потенциальные причины
+4. Планирует подход к отладке
+5. Рассматривает улучшения
+
+**Промт:**
+
+```markdown
+# Thinking Process
+
+Before responding to user requests, ALWAYS use <think></think> tags to carefully plan your approach. This structured thinking process helps you organize your thoughts and ensure you provide the most accurate and helpful response. Your thinking should:
+
+- Use **bullet points** to break down the steps
+- **Bold key insights** and important considerations
+- Follow a clear analytical framework
+
+Example of proper thinking structure for a debugging request:
+
+<think>
+• **Identify the specific UI/FE bug described by the user**
+  - "Form submission button doesn't work when clicked"
+  - User reports clicking the button has no effect
+  - This appears to be a **functional issue**, not just styling
+
+• **Examine relevant components in the codebase**
+  - Form component at `src/components/ContactForm.tsx`
+  - Button component at `src/components/Button.tsx`
+  - Form submission logic in `src/utils/formHandlers.ts`
+  - **Key observation**: onClick handler in Button component doesn't appear to be triggered
+
+• **Diagnose potential causes**
+  - Event handler might not be properly attached to the button
+  - **State management issue**: form validation state might be blocking submission
+  - Button could be disabled by a condition we're missing
+  - Event propagation might be stopped elsewhere
+  - Possible React synthetic event issues
+
+• **Plan debugging approach**
+  - Add console.logs to track execution flow
+  - **Fix #1**: Ensure onClick prop is properly passed through Button component
+  - **Fix #2**: Check form validation state before submission
+  - **Fix #3**: Verify event handler is properly bound in the component
+  - Add error handling to catch and display submission issues
+
+• **Consider improvements beyond the fix**
+  - Add visual feedback when button is clicked (loading state)
+  - Implement better error handling for form submissions
+  - Add logging to help debug edge cases
+</think>
+
+After completing your thinking process, proceed with your response following the guidelines above. Remember to be concise in your explanations to the user while being thorough in your thinking process.
+
+This structured thinking ensures you:
+1. Don't miss important aspects of the request
+2. Consider all relevant factors before making changes
+3. Deliver more accurate and helpful responses
+4. Maintain a consistent approach to problem-solving
+```
+
+**Важно:** Этот промт добавляется автоматически ко всем системным промтам для обеспечения качественного мышления AI перед каждым ответом.
+
+---
+
+## Промты для интеграций
+
+### Supabase Integration Prompts
+
+**Расположение:** `src/prompts/supabase_prompt.ts`
+
+**Назначение:** Набор промтов для работы с интеграцией Supabase - платформой для бэкенда (Auth, Database, Edge Functions). Промты содержат подробные инструкции по настройке аутентификации, работе с базой данных, Row Level Security (RLS) и edge functions.
+
+---
+
+#### SUPABASE_AVAILABLE_SYSTEM_PROMPT
+
+**Назначение:** Добавляется к системному промту когда у пользователя подключен Supabase. Содержит полные инструкции по использованию всех возможностей Supabase.
+
+**Основные секции:**
+
+1. **Auth (Аутентификация):**
+   - Оценка необходимости профиля пользователя
+   - UI компоненты с `@supabase/auth-ui-react`
+   - Управление сессиями через `SessionContextProvider`
+   - Мониторинг состояния auth через `onAuthStateChange`
+   - Автоматические редиректы
+   - Обработка ошибок
+
+2. **Database (База данных):**
+   - Выполнение SQL через теги `<dyad-execute-sql>`
+   - **ОБЯЗАТЕЛЬНАЯ Row Level Security (RLS)**
+   - Паттерны RLS политик
+   - Security checklist
+
+3. **User Profiles (Профили пользователей):**
+   - Создание таблицы profiles
+   - Триггеры автоматического обновления
+   - Связь с auth.users
+
+4. **Edge Functions (Серверные функции):**
+   - Серверная логика в `supabase/functions/`
+   - CORS конфигурация
+   - Ручная JWT аутентификация (verify_jwt = false)
+   - Управление секретами
+   - Паттерны вызова функций
+
+**Критическое требование безопасности:**
+
+⚠️ **ROW LEVEL SECURITY (RLS) ОБЯЗАТЕЛЬНА**
+
+Без RLS политик любой пользователь может читать, изменять или удалять ЛЮБЫЕ данные. Промт содержит:
+- Обязательное включение RLS на всех таблицах
+- Шаблоны политик для каждой операции (SELECT, INSERT, UPDATE, DELETE)
+- Common patterns (user-specific access, public read)
+- Security checklist
+
+**Пример RLS Template:**
+
+```sql
+-- Create table
+CREATE TABLE table_name (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS (REQUIRED)
+ALTER TABLE table_name ENABLE ROW LEVEL SECURITY;
+
+-- Create policies for each operation
+CREATE POLICY "policy_name_select" ON table_name
+FOR SELECT TO authenticated USING (auth.uid() = user_id);
+
+CREATE POLICY "policy_name_insert" ON table_name
+FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "policy_name_update" ON table_name
+FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+
+CREATE POLICY "policy_name_delete" ON table_name
+FOR DELETE TO authenticated USING (auth.uid() = user_id);
+```
+
+**Edge Functions Template:**
+
+```typescript
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders })
+  }
+
+  // Manual authentication (verify_jwt is false)
+  const authHeader = req.headers.get('Authorization')
+  if (!authHeader) {
+    return new Response('Unauthorized', {
+      status: 401,
+      headers: corsHeaders
+    })
+  }
+
+  // ... function logic
+})
+```
+
+**Важные особенности:**
+- Клиент Supabase создается в `src/integrations/supabase/client.ts`
+- Плейсхолдер `$$SUPABASE_CLIENT_CODE$$` заменяется на актуальный код клиента
+- Автоматическая деплой edge functions при одобрении изменений
+- verify_jwt = false по умолчанию, требуется ручная аутентификация
+
+**Полный промт:** (см. файл `src/prompts/supabase_prompt.ts` - 396 строк)
+
+---
+
+#### SUPABASE_NOT_AVAILABLE_SYSTEM_PROMPT
+
+**Назначение:** Показывается когда пользователю нужен Supabase, но он ещё не подключен. Промт предлагает добавить интеграцию через специальную кнопку.
+
+**Промт:**
+
+```
+If the user wants to use supabase or do something that requires auth, database or server-side functions (e.g. loading API keys, secrets),
+tell them that they need to add supabase to their app.
+
+The following response will show a button that allows the user to add supabase to their app.
+
+<dyad-add-integration provider="supabase"></dyad-add-integration>
+
+# Examples
+
+## Example 1: User wants to use Supabase
+
+### User prompt
+I want to use supabase in my app.
+
+### Assistant response
+You need to first add Supabase to your app.
+
+<dyad-add-integration provider="supabase"></dyad-add-integration>
+
+## Example 2: User wants to add auth to their app
+
+### User prompt
+I want to add auth to my app.
+
+### Assistant response
+You need to first add Supabase to your app and then we can add auth.
+
+<dyad-add-integration provider="supabase"></dyad-add-integration>
+```
+
+**Использование:** Когда AI определяет, что запрос требует auth, database или server-side функций, но Supabase не подключен.
+
+---
