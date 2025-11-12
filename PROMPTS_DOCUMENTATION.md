@@ -917,3 +917,449 @@ Use <dyad-chat-summary> for setting the chat summary (put this at the end). The 
 - "Refactoring user profile component"
 
 ---
+
+## Динамические контекстные промты
+
+Эти промты генерируются динамически на лету в зависимости от контекста пользователя и добавляются к основному системному промту или к сообщениям в беседе.
+
+**Расположение:** `src/ipc/handlers/chat_stream_handlers.ts`
+
+### 1. Codebase Context Prompts
+
+**Функции:** `createCodebasePrompt()`, `createOtherAppsCodebasePrompt()`
+
+**Назначение:** Добавляет информацию о кодовой базе текущего проекта и связанных проектов в контекст AI.
+
+**Формат:**
+
+```
+This is my codebase. [информация о файлах, структуре проекта]
+```
+
+**Для связанных приложений (read-only):**
+
+```
+Here are the codebases of the apps you mentioned. These are READ-ONLY and you cannot modify them:
+
+@app:AppName
+[codebase info for referenced app]
+```
+
+**Использование:**
+- Автоматически добавляется как user message в начале беседы
+- Предоставляет AI полный контекст проекта
+- Для referenced apps (@app:) - только чтение, без возможности модификации
+
+---
+
+### 2. Image Attachment Prompts
+
+**Назначение:** Инструкции для AI при работе с прикрепленными изображениями (скриншоты, дизайны, диаграммы, wireframes).
+
+**Триггер:** Пользователь прикрепляет изображения к сообщению
+
+**Добавляемые инструкции:**
+
+```
+The user has attached images. Please:
+- Analyze the images carefully
+- Describe what you see in the images
+- Use the images as reference for implementing features
+- Follow the design/layout shown in the images
+
+Images may include:
+- UI screenshots for reference
+- Design mockups to implement
+- Diagrams explaining architecture
+- Wireframes showing layout
+- Error messages or bugs to fix
+```
+
+**Использование:**
+- Автоматически добавляется когда есть image attachments
+- Изображения передаются в multimodal формате
+- AI может видеть и анализировать визуальный контент
+
+---
+
+### 3. File Upload Prompts
+
+**Назначение:** Инструкции для AI при работе с файлами, загружаемыми пользователем в кодовую базу.
+
+**Триггер:** Пользователь загружает файлы через "upload to codebase"
+
+**Добавляемые инструкции:**
+
+```
+The user has uploaded files to be added to the codebase. Use <dyad-write> tags with the following placeholders:
+
+DYAD_ATTACHMENT_1 - [filename1]
+DYAD_ATTACHMENT_2 - [filename2]
+...
+
+Example:
+<dyad-write path="src/assets/logo.png">
+DYAD_ATTACHMENT_1
+</dyad-write>
+```
+
+**Использование:**
+- Плейсхолдеры заменяются на реальное содержимое файлов
+- AI использует `<dyad-write>` с плейсхолдерами
+- Поддерживает множественные файлы
+
+---
+
+### 4. Selected Component Context
+
+**Назначение:** Когда пользователь выделяет конкретный компонент или код в UI, этот контекст добавляется к промту с маркером для редактирования.
+
+**Формат:**
+
+```
+The user has selected this component to edit:
+
+```language
+[код компонента]
+// <-- EDIT HERE
+[остальной код]
+```
+```
+
+**Использование:**
+- Фокусирует внимание AI на конкретном месте в коде
+- Маркер `// <-- EDIT HERE` указывает точку для изменений
+- Помогает AI понять контекст запроса
+
+---
+
+### 5. App Mention Context (@app:)
+
+**Назначение:** Когда пользователь упоминает другие приложения через `@app:AppName`, их кодовая база добавляется в контекст как read-only reference.
+
+**Формат:**
+
+```
+The user mentioned these apps. Their codebases are provided for reference (READ-ONLY):
+
+@app:ProjectA
+[codebase of ProjectA]
+
+@app:ProjectB
+[codebase of ProjectB]
+
+You can reference code from these apps but CANNOT modify them.
+```
+
+**Использование:**
+- Cross-project references
+- Копирование паттернов из других проектов
+- Соблюдение консистентности между проектами
+- Только чтение, модификация запрещена
+
+---
+
+### 6. Supabase Dynamic Context
+
+**Функция:** `getSupabaseContext()`
+
+**Расположение:** `src/supabase_admin/supabase_context.ts`
+
+**Назначение:** Динамически генерирует контекст с актуальной информацией о Supabase проекте пользователя.
+
+**Включает:**
+
+1. **Project Information:**
+   ```
+   Supabase Project ID: [project-id]
+   Supabase Publishable Key (anon): [anon-key]
+   ```
+
+2. **Secrets:**
+   ```
+   Available secrets:
+   - SECRET_NAME_1
+   - SECRET_NAME_2
+   ```
+
+3. **Database Schema:**
+   Выполняется SQL запрос для получения схемы:
+   ```sql
+   SELECT
+     table_name,
+     column_name,
+     data_type,
+     is_nullable
+   FROM information_schema.columns
+   WHERE table_schema = 'public'
+   ORDER BY table_name, ordinal_position;
+   ```
+
+   Результат форматируется как:
+   ```
+   Database Schema:
+
+   Table: users
+   - id (uuid, NOT NULL)
+   - email (text, NULL)
+   - created_at (timestamp with time zone, NULL)
+
+   Table: posts
+   - id (uuid, NOT NULL)
+   - user_id (uuid, NULL)
+   - title (text, NULL)
+   ```
+
+**Использование:**
+- Добавляется автоматически когда Supabase подключен
+- AI видит актуальную схему БД
+- Помогает правильно писать SQL запросы
+- Знает какие секреты доступны
+
+---
+
+### 7. Security Rules Context
+
+**Назначение:** Если в проекте существует файл `SECURITY_RULES.md`, его содержимое добавляется к security review промту.
+
+**Формат:**
+
+```
+Project-specific security rules:
+
+[content of SECURITY_RULES.md]
+```
+
+**Использование:**
+- Кастомные требования безопасности проекта
+- Compliance rules (GDPR, HIPAA, etc.)
+- Organization security policies
+- Industry-specific regulations
+
+---
+
+### 8. MCP (Model Context Protocol) Tool Calls
+
+**Назначение:** Обертка для вызовов внешних инструментов через MCP протокол.
+
+**Формат вызова:**
+
+```xml
+<dyad-mcp-tool-call tool-name="tool-name" server="server-name">
+{
+  "argument1": "value1",
+  "argument2": "value2"
+}
+</dyad-mcp-tool-call>
+```
+
+**Формат результата:**
+
+```xml
+<dyad-mcp-tool-result tool-name="tool-name">
+{
+  "result": "tool output"
+}
+</dyad-mcp-tool-result>
+```
+
+**Особенности:**
+- Требует одобрения пользователя перед выполнением
+- Поддержка внешних инструментов (web search, APIs, etc.)
+- Расширяемость через MCP серверы
+
+---
+
+### 9. Prompt Library References (@prompt:)
+
+**Расположение:** `src/ipc/handlers/prompt_handlers.ts`
+
+**Функция:** `replacePromptReference()`
+
+**Назначение:** Пользователи могут создавать библиотеку переиспользуемых промтов и ссылаться на них через `@prompt:<id>`.
+
+**Хранение:** Database таблица `prompts`
+
+**CRUD Operations:**
+- `handlePromptAdd` - создание нового промта
+- `handlePromptUpdate` - обновление промта
+- `handlePromptDelete` - удаление промта
+- `handlePromptGet` - получение промта
+- `handlePromptList` - список всех промтов
+
+**Использование:**
+
+```
+User: Implement @prompt:123 for the login page
+
+AI sees: Implement [full content of prompt 123] for the login page
+```
+
+**Преимущества:**
+- Переиспользуемые инструкции
+- Стандартизация требований
+- Team sharing prompts
+- Version control for prompts
+
+---
+
+### 10. Test Prompts (QA)
+
+**Расположение:** `src/ipc/handlers/testing_chat_handlers.ts`
+
+**Назначение:** Заготовленные ответы для E2E тестирования системы.
+
+**Триггер:** `[dyad-qa=<key>]` в промте пользователя
+
+**Доступные тестовые кейсы:**
+
+- `ts-error` - Создает файл с TypeScript ошибками
+- `add-dep` - Добавляет одну зависимость
+- `add-non-existing-dep` - Тестирует обработку ошибок
+- `add-multiple-deps` - Добавляет несколько пакетов
+- `write` - Простая операция записи
+- `string-literal-leak` - Тестирует edge case парсинга тегов
+
+**Пример:**
+
+```
+User: [dyad-qa=write]
+AI: <dyad-write path="test.txt">Hello World</dyad-write>
+```
+
+---
+
+## Сборка итогового промта - Pipeline
+
+**Расположение:** `src/ipc/handlers/chat_stream_handlers.ts`
+
+**Функция:** `constructSystemPrompt()` и message construction logic
+
+**Порядок сборки промта для AI:**
+
+```
+1. THINKING_PROMPT (если включен)
+   ↓
+2. Base System Prompt (на основе chat mode)
+   - BUILD_SYSTEM_PROMPT (build mode)
+   - ASK_MODE_SYSTEM_PROMPT (ask mode)
+   - AGENT_MODE_SYSTEM_PROMPT (agent mode)
+   - SECURITY_REVIEW_SYSTEM_PROMPT (security review)
+   - SUMMARIZE_CHAT_SYSTEM_PROMPT (summarization)
+   ↓
+3. AI_RULES (из AI_RULES.md или DEFAULT_AI_RULES)
+   ↓
+4. Turbo Edits Prompt (если включен)
+   + TURBO_EDITS_V2_SYSTEM_PROMPT
+   ↓
+5. Supabase Context (если подключен)
+   + SUPABASE_AVAILABLE_SYSTEM_PROMPT или SUPABASE_NOT_AVAILABLE_SYSTEM_PROMPT
+   + Dynamic Supabase context (project ID, schema, secrets)
+   ↓
+6. Security Rules (если файл exists)
+   + Content of SECURITY_RULES.md
+   ↓
+7. --- User Messages Begin ---
+   ↓
+8. Codebase Context (as user message)
+   + createCodebasePrompt()
+   + createOtherAppsCodebasePrompt() (if @app: mentions)
+   ↓
+9. Chat History (ограниченная MAX_CHAT_TURNS_IN_CONTEXT)
+   + Previous user messages
+   + Previous assistant messages
+   ↓
+10. Current User Message
+    + Prompt reference expansion (@prompt:)
+    + Image attachments (with instructions)
+    + File uploads (with placeholders)
+    + Selected component (with EDIT HERE marker)
+    + App mentions expansion (@app:)
+    + User's actual question/request
+```
+
+**Примечания:**
+- MAX_CHAT_TURNS_IN_CONTEXT обычно = 10-20 последних сообщений
+- Для summarization используется специальная логика `formatMessagesForSummary()`
+- Security review полностью заменяет системный промт
+- Test prompts (`[dyad-qa=]`) короткозамыкают весь процесс
+
+---
+
+## Summary: Все файлы с промтами
+
+| Файл | Промты | Назначение |
+|------|--------|------------|
+| `src/prompts/system_prompt.ts` | THINKING_PROMPT, BUILD_SYSTEM_PROMPT, ASK_MODE_SYSTEM_PROMPT, AGENT_MODE_SYSTEM_PROMPT, DEFAULT_AI_RULES | Основные системные промты для режимов работы |
+| `src/prompts/supabase_prompt.ts` | SUPABASE_AVAILABLE_SYSTEM_PROMPT, SUPABASE_NOT_AVAILABLE_SYSTEM_PROMPT | Интеграция Supabase |
+| `src/prompts/security_review_prompt.ts` | SECURITY_REVIEW_SYSTEM_PROMPT | Аудит безопасности |
+| `src/prompts/summarize_chat_system_prompt.ts` | SUMMARIZE_CHAT_SYSTEM_PROMPT | Суммаризация бесед |
+| `src/pro/main/prompts/turbo_edits_v2_prompt.ts` | TURBO_EDITS_V2_SYSTEM_PROMPT | Search-replace редактирование |
+| `src/shared/problem_prompt.ts` | createProblemFixPrompt() | Исправление TS ошибок |
+| `src/ipc/handlers/chat_stream_handlers.ts` | Dynamic context prompts | Динамические контексты |
+| `src/supabase_admin/supabase_context.ts` | getSupabaseContext() | Supabase схема и проект |
+| `src/ipc/handlers/prompt_handlers.ts` | Prompt library CRUD | Библиотека промтов |
+| `src/ipc/handlers/testing_chat_handlers.ts` | TEST_RESPONSES | E2E тестирование |
+| `src/prompts/inspiration_prompts.tsx` | INSPIRATION_PROMPTS | UI quick-start предложения |
+
+---
+
+## Пользовательские файлы с промтами
+
+### AI_RULES.md
+
+**Расположение:** Корень проекта (например, `/project/AI_RULES.md`)
+
+**Назначение:** Project-specific tech stack и coding guidelines. Заменяет `DEFAULT_AI_RULES`.
+
+**Пример содержимого:**
+
+```markdown
+# Tech Stack
+- Next.js 14 with App Router
+- TypeScript
+- Prisma ORM
+- PostgreSQL
+- TailwindCSS + shadcn/ui
+- React Query for data fetching
+
+# Coding Guidelines
+- Use server components by default
+- Client components only when needed (interactivity, hooks)
+- All database queries through Prisma
+- Use Zod for validation
+- Follow atomic design for components
+```
+
+---
+
+### SECURITY_RULES.md
+
+**Расположение:** Корень проекта
+
+**Назначение:** Project-specific security requirements и compliance rules.
+
+**Пример содержимого:**
+
+```markdown
+# Security Rules
+
+## Authentication
+- All routes require authentication except /login and /signup
+- Session timeout: 30 minutes
+- MFA required for admin accounts
+
+## Data Protection
+- PII must be encrypted at rest
+- GDPR compliance required
+- Data retention: 90 days for logs
+
+## API Security
+- Rate limiting: 100 req/min per IP
+- All API keys in environment variables
+- CORS: whitelist only production domains
+```
+
+---
+
+Это полная документация всех AI промтов, используемых в Dyad. Промты организованы по тематикам и включают описание назначения, форматы, примеры использования и расположение в кодовой базе.
