@@ -623,3 +623,297 @@ You need to first add Supabase to your app and then we can add auth.
 **Использование:** Когда AI определяет, что запрос требует auth, database или server-side функций, но Supabase не подключен.
 
 ---
+
+## Промты безопасности
+
+### SECURITY_REVIEW_SYSTEM_PROMPT
+
+**Расположение:** `src/prompts/security_review_prompt.ts`
+
+**Назначение:** Специализированный промт для проведения аудита безопасности кодовой базы. AI выступает в роли эксперта по безопасности, выявляя уязвимости, которые могут привести к утечкам данных, несанкционированному доступу или компрометации системы.
+
+**Триггер:** Активируется командой `/security-review`
+
+**Фокус на критических областях:**
+1. **Authentication & Authorization** - обход аутентификации, broken access controls, insecure sessions, JWT/OAuth проблемы, privilege escalation
+2. **Injection Attacks** - SQL injection, XSS, command injection с фокусом на exfiltration данных
+3. **API Security** - неаутентифицированные endpoints, отсутствие авторизации, excessive data, IDOR
+4. **Client-Side Secrets** - приватные API ключи exposed в браузере
+
+**Формат вывода:**
+Использует специальный тег `<dyad-security-finding>` с уровнями severity:
+
+```xml
+<dyad-security-finding title="Brief title" level="critical|high|medium|low">
+**What**: Plain-language explanation
+**Risk**: Data exposure impact (e.g., "All customer emails could be stolen")
+**Potential Solutions**: Options ranked by effectiveness
+**Relevant Files**: File paths
+</dyad-security-finding>
+```
+
+**Уровни severity:**
+- **critical**: Активно эксплуатируемая или тривиально эксплуатируемая уязвимость, ведущая к полной компрометации системы/данных
+- **high**: Эксплуатируемая при определенных условиях; может привести к значительной утечке данных, захвату аккаунта или нарушению работы сервиса
+- **medium**: Увеличивает exposure или ослабляет защиту, но требует нескольких шагов или экспертизы атакующего
+- **low**: Низкий непосредственный риск; требует локального доступа, маловероятной цепочки событий или только нарушает best practices
+
+**Пример вывода:**
+
+```xml
+<dyad-security-finding title="SQL Injection in User Lookup" level="critical">
+**What**: User input flows directly into database queries without validation, allowing attackers to execute arbitrary SQL commands
+
+**Risk**: An attacker could steal all customer data, delete your entire database, or take over admin accounts by manipulating the URL
+
+**Potential Solutions**:
+1. Use parameterized queries: `db.query('SELECT * FROM users WHERE id = ?', [userId])`
+2. Add input validation to ensure `userId` is a number
+3. Implement an ORM like Prisma or TypeORM that prevents SQL injection by default
+
+**Relevant Files**: `src/api/users.ts`
+</dyad-security-finding>
+```
+
+**Принципы работы:**
+- Поиск реальных, эксплуатируемых уязвимостей
+- Приоритет client-side exposed secrets и утечкам данных
+- Деприоритизация availability-only проблем (site going down < data leakage)
+- Plain language с конкретными путями к файлам
+- Private API keys/secrets exposed client-side = critical (public/anon keys OK)
+
+**Промт:**
+
+```
+# Role
+Security expert identifying vulnerabilities that could lead to data breaches, leaks, or unauthorized access.
+
+# Focus Areas
+
+Focus on these areas but also highlight other important security issues.
+
+## Authentication & Authorization
+Authentication bypass, broken access controls, insecure sessions, JWT/OAuth flaws, privilege escalation
+
+## Injection Attacks
+SQL injection, XSS (Cross-Site Scripting), command injection - focus on data exfiltration and credential theft
+
+## API Security
+Unauthenticated endpoints, missing authorization, excessive data in responses, IDOR vulnerabilities
+
+## Client-Side Secrets
+Private API keys/tokens exposed in browser where they can be stolen
+
+# Output Format
+
+<dyad-security-finding title="Brief title" level="critical|high|medium|low">
+**What**: Plain-language explanation
+**Risk**: Data exposure impact (e.g., "All customer emails could be stolen")
+**Potential Solutions**: Options ranked by how effectively they address the issue
+**Relevant Files**: Relevant file paths
+</dyad-security-finding>
+
+# Severity Levels
+**critical**: Actively exploitable or trivially exploitable, leading to full system or data compromise with no mitigation in place.
+**high**: Exploitable with some conditions or privileges; could lead to significant data exposure, account takeover, or service disruption.
+**medium**: Vulnerability increases exposure or weakens defenses, but exploitation requires multiple steps or attacker sophistication.
+**low**: Low immediate risk; typically requires local access, unlikely chain of events, or only violates best practices without a clear exploitation path.
+
+# Instructions
+1. Find real, exploitable vulnerabilities that lead to data breaches
+2. Prioritize client-side exposed secrets and data leaks
+3. De-prioritize availability-only issues; the site going down is less critical than data leakage
+4. Use plain language with specific file paths
+5. Flag private API keys/secrets exposed client-side as critical (public/anon keys like Supabase anon are OK)
+
+Begin your security review.
+```
+
+**Расширение:** Если в проекте существует файл `SECURITY_RULES.md`, его содержимое добавляется к промту для учета специфических требований безопасности проекта.
+
+---
+
+## Промты редактирования кода
+
+### TURBO_EDITS_V2_SYSTEM_PROMPT - Search-Replace редактирование
+
+**Расположение:** `src/pro/main/prompts/turbo_edits_v2_prompt.ts`
+
+**Назначение:** Продвинутая система точечного редактирования файлов через search-replace операции. Позволяет AI делать хирургически точные изменения в существующих файлах без необходимости переписывать их целиком. Вдохновлено Roo Code и Aider.
+
+**Ключевые преимущества:**
+- Точные, таргетированные модификации
+- Хирургические правки вместо полной перезаписи
+- Множественные изменения в одном файле за один вызов
+- Сохранение контекста файла
+
+**Формат:**
+
+```
+<<<<<<< SEARCH
+[точное содержимое для поиска, включая whitespace]
+=======
+[новое содержимое для замены]
+>>>>>>> REPLACE
+```
+
+**Использование:**
+
+```xml
+<dyad-search-replace path="path/to/file.js" description="Brief description of changes">
+<<<<<<< SEARCH
+def calculate_total(items):
+    sum = 0
+=======
+def calculate_sum(items):
+    sum = 0
+>>>>>>> REPLACE
+
+<<<<<<< SEARCH
+        total += item
+    return total
+=======
+        sum += item
+    return sum
+>>>>>>> REPLACE
+</dyad-search-replace>
+```
+
+**Важные правила:**
+- SEARCH секция должна совпадать РОВНО С ОДНИМ местом в файле (быть уникальной)
+- Включая все whitespace и отступы
+- Можно делать множественные SEARCH/REPLACE блоки в одном теге
+- Нельзя использовать `dyad-write` и `dyad-search-replace` на одном файле в одном ответе
+- Всегда делать максимум изменений в одном вызове через множественные блоки
+
+**Пример с одной правкой:**
+
+Оригинальный файл:
+```python
+def calculate_total(items):
+    total = 0
+    for item in items:
+        total += item
+    return total
+```
+
+Search/Replace:
+```
+<<<<<<< SEARCH
+def calculate_total(items):
+    total = 0
+    for item in items:
+        total += item
+    return total
+=======
+def calculate_total(items):
+    """Calculate total with 10% markup"""
+    return sum(item * 1.1 for item in items)
+>>>>>>> REPLACE
+```
+
+**Когда использовать:**
+- Turbo Edits включены в настройках пользователя
+- Нужны точечные изменения в существующих файлах
+- Изменения затрагивают небольшие части большого файла
+- Нужно сделать несколько независимых правок в одном файле
+
+**Промт:** (см. полный промт в файле - 94 строки с примерами)
+
+---
+
+## Промты для работы с ошибками
+
+### createProblemFixPrompt() - Исправление TypeScript ошибок
+
+**Расположение:** `src/shared/problem_prompt.ts`
+
+**Назначение:** Динамически генерирует промт для исправления ошибок компиляции TypeScript. Форматирует список ошибок с контекстом кода для передачи AI.
+
+**Формат вывода:**
+
+```
+Fix these N TypeScript compile-time error(s):
+
+1. file.ts:line:col - error message (TScode)
+```code snippet showing the error```
+
+Please fix all errors in a concise way.
+```
+
+**Использование:**
+- Автоматически вызывается при обнаружении ошибок TypeScript
+- Включает контекст кода вокруг ошибки
+- Может группировать множественные ошибки
+- AI получает все ошибки сразу для комплексного исправления
+
+**Пример:**
+
+```
+Fix these 2 TypeScript compile-time error(s):
+
+1. src/components/Button.tsx:15:5 - Type 'string' is not assignable to type 'number' (TS2322)
+```typescript
+const Button = ({ count }: { count: number }) => {
+  const value: number = "hello"; // Error here
+  return <button>{count}</button>;
+};
+```
+
+2. src/utils/helpers.ts:8:10 - Property 'map' does not exist on type 'string' (TS2339)
+```typescript
+function processItems(items: string) {
+  return items.map(item => item.toUpperCase()); // Error here
+}
+```
+
+Please fix all errors in a concise way.
+```
+
+---
+
+## Промты суммаризации
+
+### SUMMARIZE_CHAT_SYSTEM_PROMPT - Суммаризация бесед
+
+**Расположение:** `src/prompts/summarize_chat_system_prompt.ts`
+
+**Назначение:** Сжимает длинные беседы в краткие bullet points с фокусом на основные изменения и действия, особенно в конце разговора.
+
+**Триггер:** Активируется запросом типа `Summarize from chat-id=N`
+
+**Формат вывода:**
+
+```xml
+<dyad-chat-summary>Brief title (less than sentence, more than few words)</dyad-chat-summary>
+```
+
+**Принципы:**
+- Фокус на major changes в конце беседы
+- Краткие bullet points
+- Заголовок: короче предложения, но информативнее чем 2-3 слова
+- ВСЕГДА включать РОВНО ОДИН заголовок чата
+
+**Промт:**
+
+```
+You are a helpful assistant that understands long conversations and can summarize them in a few bullet points.
+
+I want you to write down the gist of the conversation in a few bullet points, focusing on the major changes, particularly
+at the end of the conversation.
+
+Use <dyad-chat-summary> for setting the chat summary (put this at the end). The chat summary should be less than a sentence, but more than a few words. YOU SHOULD ALWAYS INCLUDE EXACTLY ONE CHAT TITLE
+```
+
+**Использование:**
+- Автоматическое создание заголовков для сохраненных чатов
+- Быстрый обзор содержания беседы
+- Навигация по истории чатов
+
+**Примеры заголовков:**
+- "Adding dark mode toggle"
+- "Fixing authentication bug"
+- "Implementing payment integration"
+- "Refactoring user profile component"
+
+---
